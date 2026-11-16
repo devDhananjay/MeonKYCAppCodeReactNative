@@ -68,7 +68,7 @@ class ApiClientClass {
         debugPrint('[API MULTIPART] WARNING: No access token in storage');
       }
       try {
-        const res = await sendMultipart(request);
+        const res = await sendMultipart(request, BaseAPI.uploadTimeout);
         const bodyPreview =
           res.body.length > 600 ? `${res.body.substring(0, 600)}...` : res.body;
         debugPrint(`[API MULTIPART] Response ${res.statusCode}: ${url}\n${bodyPreview}`);
@@ -80,9 +80,9 @@ class ApiClientClass {
     };
 
     if (skipRefreshOn401) {
-      return withTimeout(send(), BaseAPI.requestTimeout);
+      return withTimeout(send(), BaseAPI.uploadTimeout);
     }
-    return withTimeout(ApiInterceptor.request(send), BaseAPI.requestTimeout);
+    return withTimeout(ApiInterceptor.request(send), BaseAPI.uploadTimeout);
   }
 }
 

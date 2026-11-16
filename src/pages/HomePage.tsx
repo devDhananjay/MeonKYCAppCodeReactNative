@@ -32,7 +32,6 @@ import {viewDocument} from '@react-native-documents/viewer';
 import {ApiClient} from '../api/apiClient';
 import type {HttpResponse} from '../api/http';
 import {KycAPI} from '../api/kycApi';
-import {LeadSquaredAPI} from '../api/leadsquaredApi';
 import {SsoAPI} from '../api/ssoApi';
 import {resolveSsoCredentials, kHideOnboardingFormFooter} from '../sso/ssoTempCredentialsGate';
 import {
@@ -389,19 +388,6 @@ export function HomePage(props: Props) {
     return '';
   }
 
-  async function fetchKycLeadIdBeforeSso(opts: {mobileNumber: string}): Promise<string | null> {
-    try {
-      return await LeadSquaredAPI.captureLead({
-        mobileNumber: opts.mobileNumber,
-        firstName: leadQueryParam(['firstname', 'first_name', 'FirstName']),
-        ageGroup: leadQueryParam(['age_group', 'mx_Lead_Age_Group']),
-      });
-    } catch (e) {
-      debugPrint(`[HomePage] LeadSquared before SSO failed: ${e}`);
-      return null;
-    }
-  }
-
   async function recoverInvalidSessionViaSso(s: AppStore): Promise<boolean> {
     if (!s.invalidUserSession) return false;
     debugPrint('[HomePage] Invalid session — clearing token and opening SSO');
@@ -452,22 +438,13 @@ export function HomePage(props: Props) {
 
       debugPrint('[HomePage] No access token - attempting SSO login...');
 
-      const leadFirstName = leadQueryParam(['firstname', 'first_name', 'FirstName']);
-      const leadAgeGroup = leadQueryParam(['age_group', 'mx_Lead_Age_Group']);
-
-      const kycLeadId = await fetchKycLeadIdBeforeSso({mobileNumber});
-      if (kycLeadId != null && kycLeadId.length > 0) {
-        debugPrint(`[HomePage] LeadSquared kyc_lead for SSO: ${kycLeadId}`);
-      }
-
       const tokens = await SsoAPI.getSsoRouteTokens({
         company: widget.company,
         workflowName: widget.workflowName,
         mobileNumber,
         email,
-        firstName: leadFirstName,
-        ageGroup: leadAgeGroup,
-        kycLeadId,
+        firstName: leadQueryParam(['firstname', 'first_name', 'FirstName']),
+        ageGroup: leadQueryParam(['age_group', 'mx_Lead_Age_Group']),
       });
 
       if (tokens == null) {

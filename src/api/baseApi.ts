@@ -60,8 +60,15 @@ function applyBearerAndCsrf(headers: Record<string, string>, token: string | nul
 }
 
 class BaseAPIClass {
-  /** Default timeout for KYC API calls (`get-context`, `kyc-post-v2`, etc.): 600 s. */
-  readonly requestTimeout = 600 * 1000;
+  /**
+   * Default timeout for JSON KYC API calls (`get-workflow-details`, `get-context`, etc.).
+   * Keep this far below the old 600s so a hung network cannot stick the UI on
+   * "Setting up your KYC journey..." indefinitely.
+   */
+  readonly requestTimeout = 45 * 1000;
+
+  /** Multipart uploads / heavy posts may still need a long window. */
+  readonly uploadTimeout = 600 * 1000;
 
   private get baseUrl(): string {
     return EnvConfig.baseUrl;

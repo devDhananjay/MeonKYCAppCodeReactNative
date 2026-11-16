@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  - localhost cleartext: required for Metro (adb reverse -> http://localhost:8081)
+  - rudrashares domain: trusts Sectigo R46 chain (missing on many Android versions),
+    which otherwise causes OkHttp/fetch "Network request failed"
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- Debug bundler / emulators -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">127.0.0.1</domain>
+        <domain includeSubdomains="true">10.0.2.2</domain>
+    </domain-config>
+
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">ekyc.rudrashares.com</domain>
+        <domain includeSubdomains="true">rudrashares.com</domain>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+            <certificates src="@raw/rudra_cert_0" />
+            <certificates src="@raw/rudra_cert_1" />
+            <certificates src="@raw/rudra_cert_2" />
+        </trust-anchors>
+    </domain-config>
+</network-security-config>

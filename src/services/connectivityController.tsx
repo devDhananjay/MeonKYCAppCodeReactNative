@@ -4,15 +4,24 @@ import {EnvConfig} from '../config/env';
 import {ChangeNotifier, useNotifier} from '../utils/changeNotifier';
 
 const CHECK_INTERVAL_MS = 4000;
-const CHECK_TIMEOUT_MS = 10000;
+const CHECK_TIMEOUT_MS = 8000;
 
-/** Mirrors InternetCheckOption: reachable when HEAD returns 2xx. */
+/**
+ * Reachability probe.
+ * Uses GET (not HEAD): many office networks / CDNs drop or hang on HEAD, which
+ * falsely showed "Low internet connection" while normal API POSTs still worked.
+ * Treat 2xx–3xx as online (hosts often 301 to www / trailing slash).
+ */
 async function checkUri(uri: string): Promise<boolean> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), CHECK_TIMEOUT_MS);
   try {
-    const res = await fetch(uri, {method: 'HEAD', signal: controller.signal});
-    return res.status >= 200 && res.status < 300;
+    const res = await fetch(uri, {
+      method: 'GET',
+      signal: controller.signal,
+      headers: {Accept: '*/*'},
+    });
+    return res.status >= 200 && res.status < 400;
   } catch (_) {
     return false;
   } finally {
@@ -20,11 +29,12 @@ async function checkUri(uri: string): Promise<boolean> {
   }
 }
 
-/** internet_connection_checker_plus `hasInternetAccess`: connected if any option succeeds. */
+/** Connected if any probe succeeds. */
 async function hasInternetAccess(): Promise<boolean> {
   const results = await Promise.all([
     checkUri(EnvConfig.baseUrl),
     checkUri('https://www.google.com/generate_204'),
+    checkUri('https://clients3.google.com/generate_204'),
   ]);
   return results.some(Boolean);
 }

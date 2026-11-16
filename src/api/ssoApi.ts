@@ -2,7 +2,6 @@ import {EnvConfig} from '../config/env';
 import {debugPrint} from '../utils/debug';
 import {BaseAPI} from './baseApi';
 import {httpPost} from './http';
-import {LeadSquaredAPI} from './leadsquaredApi';
 
 export interface SsoTokenResult {
   accessToken: string;
@@ -67,17 +66,11 @@ export const SsoAPI = {
     email: string;
     firstName?: string;
     ageGroup?: string;
-    kycLeadId?: string | null;
   }): Promise<SsoTokenResult | null> {
-    const {company, workflowName, mobileNumber, email, kycLeadId} = opts;
+    const {company, workflowName, mobileNumber, email} = opts;
     const firstName = opts.firstName ?? '';
     const ageGroup = opts.ageGroup ?? '';
     const url = `${EnvConfig.baseUrl}${SSO_ROUTE_PATH}`;
-    const leadSquaredAdditionalInfo = LeadSquaredAPI.buildSsoAdditionalInfo({
-      mobileNumber,
-      firstName,
-      ageGroup,
-    });
 
     const body: Record<string, any> = {
       company,
@@ -93,8 +86,16 @@ export const SsoAPI = {
       },
       additional_info: {
         email,
-        ...leadSquaredAdditionalInfo,
-        ...(kycLeadId != null && kycLeadId.length > 0 ? {kyc_lead: kycLeadId} : {}),
+        Phone: mobileNumber,
+        firstname: firstName,
+        age_group: ageGroup,
+        source: 'App',
+        mx_utmsource: 'App',
+        source_medium: 'App',
+        source_campaign: 'In_app_kyc',
+        mx_comsource: 'In_app_kyc',
+        mx_adgroup: '',
+        sourcecontent: 'App',
       },
       temp_data: {
         is_sso: 'yes',
@@ -106,10 +107,11 @@ export const SsoAPI = {
     debugPrint(`[SSO] Request payload: ${JSON.stringify(body)}`);
 
     try {
+      // Keep SSO short so a hung get_sso_route cannot block the KYC setup loader.
       const res = await httpPost(url, {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(body),
-        timeoutMs: BaseAPI.requestTimeout,
+        timeoutMs: Math.min(BaseAPI.requestTimeout, 15_000),
       });
 
       debugPrint(`[SSO] get_sso_route response status=${res.statusCode}`);

@@ -3,16 +3,13 @@
  * Port of lib/config/env_config.dart
  */
 export const EnvConfig = {
-  apiUrlLocal: 'https://live.meon.co.in',
-  apiUrl: 'https://live.meon.co.in',
-  ssoSecretKey: 'IBZmvgxvGUHgxNVpoXoK1c3fFVL76P0j',
-
-  /** LeadSquared proxy - post-SSO lead capture (Meon live API). */
-  leadSquaredCaptureUrl: 'https://ekyc.stoxbox.in/leadsquared_api/bp',
+  apiUrlLocal: 'https://ekyc.rudrashares.com',
+  apiUrl: 'https://ekyc.rudrashares.com',
+  ssoSecretKey: '6BLUfSm4Z7SakL1X6nNnMevFwRLxYUzv',
 
   /** Default company and workflow (static for now) */
-  companyName: 'TRUEWEALTH',
-  workflowName: 'individual', // 'app_test'; individual
+  companyName: 'rudra',
+  workflowName: 'in_app', // individual
 
   get baseUrl(): string {
     return EnvConfig.apiUrl;
