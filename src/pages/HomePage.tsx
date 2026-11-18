@@ -390,25 +390,28 @@ export function HomePage(props: Props) {
 
   async function recoverInvalidSessionViaSso(s: AppStore): Promise<boolean> {
     if (!s.invalidUserSession) return false;
-    debugPrint('[HomePage] Invalid session — clearing token and opening SSO');
+    debugPrint('[HomePage] Invalid session — clearing token and loading unauth workflow step');
     await StorageService.clearAuthTokens();
     s.clearAuthError();
     clearAuthenticatedStepCache();
-    h.ssoAttempted = false;
+    h.ssoAttempted = true;
     h.ssoInProgress = false;
-    StorageService.setSsoAutoLoginEnabled(true);
+    // Do not auto-SSO: that resumes the previous mobile into mobile_otp even after
+    // the backend entry was deleted. Load get-workflow-details instead.
+    StorageService.setSsoAutoLoginEnabled(false);
     if (!mounted()) return false;
-    return trySsoLoginIfNeeded(s);
+    await s.fetchWorkflowFields(widget.company, widget.workflowName);
+    return isMap(s.fields);
   }
 
   async function fetchContextAndRecoverIfNeeded(s: AppStore, queryString: string): Promise<boolean> {
     await s.fetchWorkflowFieldsWithAuth(widget.company, widget.workflowName, queryString);
     if (!mounted()) return false;
     if (s.invalidUserSession) {
-      const ssoOk = await recoverInvalidSessionViaSso(s);
-      if (!ssoOk || !mounted()) return false;
-      await s.fetchWorkflowFieldsWithAuth(widget.company, widget.workflowName, queryString);
-      return mounted() && !s.invalidUserSession;
+      const recovered = await recoverInvalidSessionViaSso(s);
+      if (!mounted()) return false;
+      // Unauth workflow loaded — callers should treat this as no authenticated context.
+      return recovered ? false : false;
     }
     return isMap(s.fieldsWithAuth);
   }
@@ -532,6 +535,15 @@ export function HomePage(props: Props) {
         const queryString = queryStringOf(queryParams);
 
         await fetchContextAndRecoverIfNeeded(s, queryString);
+
+        // Token cleared / session invalid → show unauth workflow current step.
+        if (!(await StorageService.hasAccessToken()) || !isMap(s.fieldsWithAuth)) {
+          if (!isMap(s.fields)) {
+            await s.fetchWorkflowFields(widget.company, widget.workflowName);
+          }
+          debugPrint(`[HomePage] _loadWorkflow DONE (unauth fallback), store.error=${s.error}`);
+          return;
+        }
 
         // Extract workflowId from design_template (format: "company-workflowId-number")
         // Example: "mandotsecurities-2321998632-76" -> workflowId = "2321998632"
@@ -2418,11 +2430,13 @@ export function HomePage(props: Props) {
 
         const token = typeof body?.access_token === 'string' ? (body.access_token as string) : null;
         const refresh = typeof body?.refresh_token === 'string' ? (body.refresh_token as string) : null;
+        // Tokens must be stored before get-context (Authorization header).
+        // Other secure writes match Flutter: fire-and-forget so Keychain cannot block step advance.
         if (token != null) await StorageService.setAccessToken(token);
         if (refresh != null) await StorageService.setRefreshToken(refresh);
-        await StorageService.setAuthSuccess('true');
-        await StorageService.setMessage(toStrOrNull(body?.msg) ?? '');
-        await StorageService.setUserStep(toStrOrNull(body?.position) ?? '');
+        void StorageService.setAuthSuccess('true');
+        void StorageService.setMessage(toStrOrNull(body?.msg) ?? '');
+        void StorageService.setUserStep(toStrOrNull(body?.position) ?? '');
         const formSnapshot: AnyMap = {...formNotifier.formData};
         const digitsBeforeReset = digitsFromFormMapOnly(formSnapshot);
         if (digitsBeforeReset.length === 10) {
@@ -2474,9 +2488,12 @@ export function HomePage(props: Props) {
         }
         if (mounted()) {
           await delay(300);
+          // Match Flutter: apply fresh step first, then unfreeze + clear loading.
+          h.activeFieldsSyncKey = null;
           await applyFreshStepAfterSuccessfulSubmit(s);
           const ctx = isMap(s.fieldsWithAuth) ? s.fieldsWithAuth : null;
           const pos = toStrOrNull(ctx?.context?.position)?.toLowerCase() ?? '';
+          debugPrint(`[HomePage] _handleSubmitResponse applied next position=${pos}`);
           if (pos === 'mobile_otp') {
             applyPersistedMobileToForm();
             h.persistedEmailForOtp = null;
@@ -2881,6 +2898,9 @@ export function HomePage(props: Props) {
   ): Promise<void> {
     const {getContextPostBody} = opts;
     const logBank18GetContext = opts.logBank18GetContext ?? false;
+    debugPrint(
+      `[HomePage] afterKycPostV2Success START step=${toStrOrNull(body?.step) ?? ''} position=${toStrOrNull(body?.position) ?? ''}`,
+    );
     const ctxBeforeRefresh = isMap(s.fieldsWithAuth) && isMap(s.fieldsWithAuth.context) ? s.fieldsWithAuth.context : null;
     const submitPosition = toStrOrNull(ctxBeforeRefresh?.position)?.toLowerCase() ?? '';
     const submitLabel = toStrOrNull(ctxBeforeRefresh?.page?.data?.label)?.toLowerCase() ?? '';
@@ -2888,7 +2908,8 @@ export function HomePage(props: Props) {
       clearRpdReturnState(s);
     }
 
-    await StorageService.setUserStep(toStrOrNull(body?.step) ?? '');
+    // Flutter does not await setUserStep — awaiting Keychain here blocked get-context after OTP.
+    void StorageService.setUserStep(toStrOrNull(body?.step) ?? '');
     // Persist email for OTP UI before any reset (payload + snapshot still valid here).
     const formSnapshot: AnyMap = {...formNotifier.formData};
     const emailSrc = submissionData.email ?? submissionData.email_id ?? submissionData.emailId;
@@ -2956,10 +2977,13 @@ export function HomePage(props: Props) {
     }
     if (mounted()) {
       await delay(300);
+      // Match Flutter: apply fresh step first, then unfreeze + clear loading.
+      h.activeFieldsSyncKey = null;
       await applyFreshStepAfterSuccessfulSubmit(s);
       const ctx = isMap(s.fieldsWithAuth) ? s.fieldsWithAuth : null;
       const contextMap = isMap(ctx?.context) ? ctx!.context : null;
       const pos = toStrOrNull(contextMap?.position)?.toLowerCase() ?? '';
+      debugPrint(`[HomePage] afterKycPostV2Success applied next position=${pos}`);
       if (pos === 'bank' || pos === 'bank_details') {
         formNotifier.applyFullConditionalFlowEvaluation();
         debugPrint('[Bank18] Still on bank — bank_upload path via conditional flow');
@@ -2972,6 +2996,10 @@ export function HomePage(props: Props) {
       setState(() => {
         h.submitLoading = false;
       });
+      // Same as handleSubmitResponse: auto-skip additional_nominee when max-3 caps apply.
+      if (await maybeAutoSkipAdditionalNomineeForMaxThree(s)) {
+        return;
+      }
       await checkAndHandleRedirect(s);
     }
   }
@@ -2979,6 +3007,10 @@ export function HomePage(props: Props) {
 
   async function handleCommonSubmit(skipValidation: boolean): Promise<void> {
     debugPrint(`[HomePage] _handleCommonSubmit CALLED - skipValidation=${skipValidation}`);
+    if (h.submitLoading) {
+      debugPrint('[HomePage] _handleCommonSubmit ignored — already submitting');
+      return;
+    }
     const s = store;
     h.panStepApiFeedback = '';
     h.panStepApiFeedbackIsError = false;
@@ -3193,6 +3225,7 @@ export function HomePage(props: Props) {
                 gravity: 'TOP',
               });
               if (mounted()) {
+                clearSubmitFreeze();
                 setState(() => {
                   h.submitLoading = false;
                 });
@@ -3206,6 +3239,7 @@ export function HomePage(props: Props) {
               gravity: 'TOP',
             });
             if (mounted()) {
+              clearSubmitFreeze();
               setState(() => {
                 h.submitLoading = false;
               });
@@ -3306,6 +3340,9 @@ export function HomePage(props: Props) {
       const currentPageLabel = toStrOrNull(ctx?.page?.data?.label)?.toLowerCase() ?? '';
       const isPanStep = isPanKycStep(currentPosition, currentPageLabel) || lowerPath.startsWith('pan');
       const isSuccess = res.statusCode >= 200 && res.statusCode < 300 && body?.success === true;
+      debugPrint(
+        `[HomePage] kyc-post-v2 result status=${res.statusCode} success=${String(body?.success)} isSuccess=${isSuccess} position=${currentPosition}`,
+      );
       if (isSuccess) {
         if (isPanStep) {
           const apiMsg = kycPostV2UserMessage(body);
@@ -3323,8 +3360,14 @@ export function HomePage(props: Props) {
         const dialogTitle = pennyDropSaveRetakeDialogTitle(body!);
         const dialogMessage = pennyDropDialogMessage(body!);
         const choice = await showPennyDropVerifiedSaveRetakeDialog(dialogTitle, {message: dialogMessage});
-        if (!mounted()) return;
-        if (choice == null) return;
+        if (!mounted()) {
+          clearSubmitFreeze();
+          return;
+        }
+        if (choice == null) {
+          clearSubmitFreeze();
+          return;
+        }
         setState(() => {
           h.submitLoading = true;
         });
@@ -3779,10 +3822,10 @@ export function HomePage(props: Props) {
       debugPrint('[HomePage] Tokens cleared');
       clearAuthenticatedStepCache();
 
-      // Post-logout: SSO-only login (user must sign in again via SSO).
-      // StorageService.setSsoAutoLoginEnabled(false);
-      StorageService.setSsoAutoLoginEnabled(true);
-      h.ssoAttempted = false;
+      // Post-logout: load get-workflow-details so the UI shows the API's current
+      // first step (e.g. mobile), not auto-SSO resume into mobile_otp.
+      StorageService.setSsoAutoLoginEnabled(false);
+      h.ssoAttempted = true;
       h.ssoInProgress = false;
 
       // Step 3: Reset form state
@@ -3792,40 +3835,17 @@ export function HomePage(props: Props) {
       const s = store;
       s.resetState();
 
-      // Step 5 (legacy): unauth get-workflow + Start your KYC screen — disabled for SSO-only.
-
       if (!mounted()) return;
-      // Stop logout spinner before SSO modal — user has not submitted KYC yet.
       setState(() => {
         h.logoutLoading = false;
       });
-      const ssoOk = await trySsoLoginIfNeeded(s);
+      await s.fetchWorkflowFields(widget.company, widget.workflowName);
       if (!mounted()) return;
-      if (ssoOk) {
-        await s.fetchWorkflowFieldsWithAuth(widget.company, widget.workflowName, '');
-        if (!mounted()) return;
-        if (responseIndicatesKycCompleted(s.fieldsWithAuth)) {
-          await navigateToKycCompletedIfNeeded(s);
-          return;
-        }
-        if (mounted()) {
-          const activeAfter = getActiveFields(s);
-          const listAfter = (activeAfter?.fields as any[] | null | undefined) ?? [];
-          const flowAfter = activeAfter?.conditionalFlow as any[] | null | undefined;
-          formNotifier.updateFields(listAfter, flowAfter, {fieldsWithAuth: s.fieldsWithAuth});
-          rerender();
-          Fluttertoast.showToast({
-            msg: 'Signed in via SSO',
-            gravity: 'TOP',
-          });
-        }
-      } else {
-        Fluttertoast.showToast({
-          msg: 'SSO sign-in required. Enter credentials to continue.',
-          gravity: 'TOP',
-        });
-        await loadWorkflow();
-      }
+      const activeAfter = getActiveFields(s);
+      const listAfter = (activeAfter?.fields as any[] | null | undefined) ?? [];
+      const flowAfter = activeAfter?.conditionalFlow as any[] | null | undefined;
+      formNotifier.updateFields(listAfter, flowAfter, {fieldsWithAuth: s.fieldsWithAuth});
+      rerender();
     } catch (e) {
       debugPrint(`[HomePage] Logout error: ${e}`);
       Fluttertoast.showToast({msg: 'Error during logout', gravity: 'TOP'});
@@ -5732,6 +5752,8 @@ export function HomePage(props: Props) {
       }
       if (mounted()) {
         await delay(200);
+        h.activeFieldsSyncKey = null;
+        await applyFreshStepAfterSuccessfulSubmit(s);
         await checkAndHandleRedirect(s);
         if (!mounted()) return;
         const response = s.fieldsWithAuth;
@@ -5965,6 +5987,7 @@ export function HomePage(props: Props) {
           sentToText={sentToText}
           onEdit={onEdit}
           onVerify={(otp: string) => {
+            if (h.submitLoading) return;
             formNotifier.handleChange(otpName, otp);
             void handleCommonSubmit(false);
           }}

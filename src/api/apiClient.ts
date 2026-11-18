@@ -53,7 +53,14 @@ class ApiClientClass {
       const request = await createRequest();
       const url = request.url;
       debugPrint(`[API MULTIPART] Request: ${url}`);
-      debugPrint(`[API MULTIPART] fields: ${JSON.stringify(request.fields)}`);
+      try {
+        debugPrint(`[API MULTIPART] fields:\n${JSON.stringify(request.fields, null, 2)}`);
+      } catch (_) {
+        debugPrint(`[API MULTIPART] fields: ${JSON.stringify(request.fields)}`);
+      }
+      debugPrint(
+        `[API MULTIPART] files: ${JSON.stringify(request.files.map(f => ({field: f.field, path: f.path, filename: f.filename, contentType: f.contentType})))}`,
+      );
       const token = await StorageService.getAccessToken();
       if (token != null) {
         request.headers.Authorization = `Bearer ${token}`;
@@ -69,9 +76,23 @@ class ApiClientClass {
       }
       try {
         const res = await sendMultipart(request, BaseAPI.uploadTimeout);
-        const bodyPreview =
-          res.body.length > 600 ? `${res.body.substring(0, 600)}...` : res.body;
-        debugPrint(`[API MULTIPART] Response ${res.statusCode}: ${url}\n${bodyPreview}`);
+        let pretty = res.body;
+        try {
+          pretty = JSON.stringify(JSON.parse(res.body), null, 2);
+        } catch (_) {
+          // keep raw
+        }
+        const chunk = 3500;
+        if (pretty.length <= chunk) {
+          debugPrint(`[API MULTIPART] Response ${res.statusCode}: ${url} (${res.body.length} chars)\n${pretty}`);
+        } else {
+          const total = Math.ceil(pretty.length / chunk);
+          for (let i = 0; i < total; i++) {
+            debugPrint(
+              `[API MULTIPART] Response ${res.statusCode}: ${url} [${i + 1}/${total}]\n${pretty.substring(i * chunk, (i + 1) * chunk)}`,
+            );
+          }
+        }
         return res;
       } catch (e) {
         debugPrint(`[API MULTIPART] Error: ${url}\n${e}`);

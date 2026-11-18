@@ -32,12 +32,9 @@ async function refreshToken(): Promise<boolean> {
   });
 
   debugPrint(`[ApiInterceptor] Refresh API response: ${res.statusCode}`);
+  debugPrint(`[ApiInterceptor] Refresh response body:\n${res.body}`);
   if (res.statusCode !== 200 && res.statusCode !== 201) {
-    debugPrint(
-      `[ApiInterceptor] Refresh failed: ${
-        res.body.length > 200 ? res.body.substring(0, 200) + '...' : res.body
-      }`,
-    );
+    debugPrint(`[ApiInterceptor] Refresh failed status=${res.statusCode}`);
     return false;
   }
 

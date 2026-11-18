@@ -6,13 +6,36 @@ import {HttpResponse, httpGet, httpPost} from './http';
 
 type Json = Record<string, any>;
 
-function truncate(s: string, max = 600): string {
-  if (s.length <= max) return s;
-  return `${s.substring(0, max)}... (${s.length} chars)`;
+/** Android logcat truncates ~4k/line — chunk so full payloads still appear. */
+const LOG_CHUNK = 3500;
+
+function prettyPayload(raw: string | null | undefined): string {
+  if (raw == null || raw.length === 0) return '(empty)';
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2);
+  } catch (_) {
+    return raw;
+  }
+}
+
+function logChunks(prefix: string, text: string): void {
+  if (text.length <= LOG_CHUNK) {
+    debugPrint(`${prefix}\n${text}`);
+    return;
+  }
+  const total = Math.ceil(text.length / LOG_CHUNK);
+  for (let i = 0; i < total; i++) {
+    const part = text.substring(i * LOG_CHUNK, (i + 1) * LOG_CHUNK);
+    debugPrint(`${prefix} [${i + 1}/${total}]\n${part}`);
+  }
 }
 
 function log(tag: string, message: string, extra?: string): void {
-  debugPrint(`[API ${tag}] ${message}${extra != null ? '\n' + extra : ''}`);
+  if (extra == null) {
+    debugPrint(`[API ${tag}] ${message}`);
+    return;
+  }
+  logChunks(`[API ${tag}] ${message}`, extra);
 }
 
 /** Reads the JWT payload as a map (null if the token is malformed). */
@@ -94,12 +117,13 @@ class BaseAPIClass {
     const url = `${this.baseUrl}${path}`;
     log('GET', `Request: ${url}`);
     const token = await StorageService.getAccessToken();
-    debugPrint(`[API] Token: ${token}`);
+    debugPrint(`[API] Token present: ${token != null && token.length > 0} length=${token?.length ?? 0}`);
     const h: Record<string, string> = {...(headers ?? {}), 'Content-Type': 'application/json'};
     applyBearerAndCsrf(h, token);
+    debugPrint(`[API GET] Request headers: ${JSON.stringify(Object.keys(h))}`);
     try {
       const res = await httpGet(url, {headers: h, timeoutMs: this.requestTimeout});
-      log('GET', `Response ${res.statusCode}: ${url}`, truncate(res.body));
+      log('GET', `Response ${res.statusCode}: ${url} (${res.body.length} chars)`, prettyPayload(res.body));
       return res;
     } catch (e) {
       log('GET', `Error: ${url}`, String(e));
@@ -119,21 +143,22 @@ class BaseAPIClass {
         : typeof body === 'object'
         ? JSON.stringify(body)
         : String(body);
-    log('POST', `Request: ${url}`, `body: ${truncate(bodyStr ?? '{}')}`);
+    log('POST', `Request: ${url}`, prettyPayload(bodyStr ?? '{}'));
     const token = await StorageService.getAccessToken();
-    debugPrint(`[API] Token: ${token}`);
+    debugPrint(`[API] Token present: ${token != null && token.length > 0} length=${token?.length ?? 0}`);
     const h: Record<string, string> = {...(headers ?? {})};
     if (!('Content-Type' in h)) {
       h['Content-Type'] = 'application/json';
     }
     applyBearerAndCsrf(h, token);
+    debugPrint(`[API POST] Request headers: ${JSON.stringify(Object.keys(h))}`);
     try {
       const res = await httpPost(url, {
         headers: h,
         body: bodyStr ?? '{}',
         timeoutMs: this.requestTimeout,
       });
-      log('POST', `Response ${res.statusCode}: ${path}`, truncate(res.body));
+      log('POST', `Response ${res.statusCode}: ${path} (${res.body.length} chars)`, prettyPayload(res.body));
 
       // Extract and log Position from get-context API response
       if (res.statusCode === 200) {
@@ -147,10 +172,18 @@ class BaseAPIClass {
             const context = responseData.context;
             if (context && typeof context === 'object' && 'position' in context) {
               debugPrint(`[API] Position extracted: ${context.position}`);
+              if (context.page && typeof context.page === 'object') {
+                debugPrint(
+                  `[API] Page label=${context.page?.data?.label ?? ''} id=${context.page?.id ?? ''} fields=${Array.isArray(context.page?.fields) ? context.page.fields.length : 0}`,
+                );
+              }
             }
           }
+          if (responseData && typeof responseData === 'object' && 'success' in responseData) {
+            debugPrint(`[API] success=${String(responseData.success)} msg=${String(responseData.msg ?? responseData.message ?? '')}`);
+          }
         } catch (_) {
-          // Ignore for responses without context (like IFSC API)
+          // Ignore for responses without JSON context
         }
       }
 
